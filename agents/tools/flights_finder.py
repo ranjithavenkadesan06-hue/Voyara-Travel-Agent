@@ -1,56 +1,112 @@
 import os
 from typing import Optional
 
-# from pydantic import BaseModel, Field
 import serpapi
 from langchain.pydantic_v1 import BaseModel, Field
 from langchain_core.tools import tool
 
 
 class FlightsInput(BaseModel):
-    departure_airport: Optional[str] = Field(description='Departure airport code (IATA)')
-    arrival_airport: Optional[str] = Field(description='Arrival airport code (IATA)')
-    outbound_date: Optional[str] = Field(description='Parameter defines the outbound date. The format is YYYY-MM-DD. e.g. 2024-06-22')
-    return_date: Optional[str] = Field(description='Parameter defines the return date. The format is YYYY-MM-DD. e.g. 2024-06-28')
-    adults: Optional[int] = Field(1, description='Parameter defines the number of adults. Default to 1.')
-    children: Optional[int] = Field(0, description='Parameter defines the number of children. Default to 0.')
-    infants_in_seat: Optional[int] = Field(0, description='Parameter defines the number of infants in seat. Default to 0.')
-    infants_on_lap: Optional[int] = Field(0, description='Parameter defines the number of infants on lap. Default to 0.')
+    departure_airport: str = Field(
+        description="Departure airport IATA code, for example MAA"
+    )
+    arrival_airport: str = Field(
+        description="Arrival airport IATA code, for example DEL"
+    )
+    outbound_date: str = Field(
+        description="Outbound date in YYYY-MM-DD format"
+    )
+    return_date: Optional[str] = Field(
+        default=None,
+        description="Return date in YYYY-MM-DD format for round trips"
+    )
+    adults: int = Field(
+        default=1,
+        description="Number of adults"
+    )
+    children: int = Field(
+        default=0,
+        description="Number of children"
+    )
+    infants_in_seat: int = Field(
+        default=0,
+        description="Number of infants in seats"
+    )
+    infants_on_lap: int = Field(
+        default=0,
+        description="Number of infants on lap"
+    )
 
 
-class FlightsInputSchema(BaseModel):
-    params: FlightsInput
+@tool(args_schema=FlightsInput)
+def flights_finder(
+    departure_airport: str,
+    arrival_airport: str,
+    outbound_date: str,
+    return_date: Optional[str] = None,
+    adults: int = 1,
+    children: int = 0,
+    infants_in_seat: int = 0,
+    infants_on_lap: int = 0,
+):
+    """
+    Search for available Google Flights using SerpAPI.
 
-
-@tool(args_schema=FlightsInputSchema)
-def flights_finder(params: FlightsInput):
-    '''
-    Find flights using the Google Flights engine.
-
-    Returns:
-        dict: Flight search results.
-    '''
+    Supports both one-way and round-trip searches.
+    """
 
     params = {
-        'api_key': os.environ.get('SERPAPI_API_KEY'),
-        'engine': 'google_flights',
-        'hl': 'en',
-        'gl': 'us',
-        'departure_id': params.departure_airport,
-        'arrival_id': params.arrival_airport,
-        'outbound_date': params.outbound_date,
-        'return_date': params.return_date,
-        'currency': 'USD',
-        'adults': params.adults,
-        'infants_in_seat': params.infants_in_seat,
-        'stops': '1',
-        'infants_on_lap': params.infants_on_lap,
-        'children': params.children
+        "api_key": os.environ.get("SERPAPI_API_KEY"),
+        "engine": "google_flights",
+        "hl": "en",
+        "gl": "us",
+        "departure_id": departure_airport,
+        "arrival_id": arrival_airport,
+        "outbound_date": outbound_date,
+        "currency": "USD",
+        "adults": adults,
+        "children": children,
+        "infants_in_seat": infants_in_seat,
+        "infants_on_lap": infants_on_lap,
     }
+
+    # Add return-trip information when a return date is provided.
+    if return_date:
+        params["return_date"] = return_date
+        params["type"] = "1"
 
     try:
         search = serpapi.search(params)
-        results = search.data['best_flights']
+
+        data = search.data
+
+        best_flights = data.get("best_flights", [])
+        other_flights = data.get("other_flights", [])
+
+        results = best_flights + other_flights
+
+        # Remove duplicate flight results.
+        unique = []
+        seen = set()
+
+        for flight in results:
+            key = str(flight)
+
+            if key not in seen:
+                seen.add(key)
+                unique.append(flight)
+
+        print(
+            f"Flights → best: {len(best_flights)}, "
+            f"other: {len(other_flights)}, "
+            f"unique: {len(unique)}"
+        )
+
+        return unique[:3]
+
     except Exception as e:
-        results = str(e)
-    return results
+        print(f"Flight search error: {e}")
+
+        return {
+            "error": str(e)
+        }
